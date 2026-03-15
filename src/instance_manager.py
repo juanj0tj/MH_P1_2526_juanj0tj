@@ -12,13 +12,16 @@ import pandas as pd
 # ============================================================
 # CONFIGURACIÓN
 # ============================================================
-
-BASE_INSTANCES_DIR = Path(__file__).resolve().parent.parent / "instances"
+CURRENT_FILE = Path(__file__).resolve()
+SRC_DIR = CURRENT_FILE.parent
+PROJECT_ROOT = SRC_DIR.parent
+BASE_INSTANCES_DIR = PROJECT_ROOT / "data" / "instances"
 BASE_INSTANCES_DIR.mkdir(parents=True, exist_ok=True)
 
 # ============================================================
 # ESTRUCTURA DE LA INSTANCIA
 # ============================================================
+
 
 @dataclass
 class ExamInstance:
@@ -42,6 +45,7 @@ class ExamInstance:
 # ============================================================
 # GENERACIÓN DE INSTANCIAS
 # ============================================================
+
 
 def generar_instancia(
     n_exams: int = 100,
@@ -82,26 +86,20 @@ def generar_instancia(
     # --------------------------------------------------------
     # 2. Número de estudiantes por examen
     # --------------------------------------------------------
-    exam_counts = student_exam.groupby("exam").size().reindex(range(n_exams), fill_value=0)
+    exam_counts = (
+        student_exam.groupby("exam").size().reindex(range(n_exams), fill_value=0)
+    )
 
-    exams_df = pd.DataFrame({
-        "exam": range(n_exams),
-        "n_students": exam_counts.values
-    })
+    exams_df = pd.DataFrame({"exam": range(n_exams), "n_students": exam_counts.values})
 
     # --------------------------------------------------------
     # 3. Generar aulas y capacidades
     # --------------------------------------------------------
     capacities = np.random.randint(
-        min_room_capacity,
-        max_room_capacity + 1,
-        size=n_rooms
+        min_room_capacity, max_room_capacity + 1, size=n_rooms
     )
 
-    rooms_df = pd.DataFrame({
-        "room": range(n_rooms),
-        "capacity": capacities
-    })
+    rooms_df = pd.DataFrame({"room": range(n_rooms), "capacity": capacities})
 
     # --------------------------------------------------------
     # 4. Ajuste opcional de factibilidad por capacidad
@@ -121,13 +119,15 @@ def generar_instancia(
     room_capacities = dict(zip(rooms_df["room"], rooms_df["capacity"]))
 
     students_by_exam_series = student_exam.groupby("exam")["student"].apply(set)
-    students_by_exam = {exam: set() for exam in range(n_exams)}
-    students_by_exam.update(students_by_exam_series.to_dict())
+    students_by_exam = {
+        exam: set(students_by_exam_series.get(exam, set())) for exam in range(n_exams)
+    }
 
     exams_by_student_series = student_exam.groupby("student")["exam"].apply(list)
-    exams_by_student = {student: [] for student in range(n_students)}
-    exams_by_student.update(exams_by_student_series.to_dict())
-
+    exams_by_student = {
+        student: list(exams_by_student_series.get(student, []))
+        for student in range(n_students)
+    }
     # --------------------------------------------------------
     # 6. Matriz de conflictos
     # --------------------------------------------------------
@@ -163,50 +163,43 @@ def generar_instancia(
 # GUARDAR / CARGAR INSTANCIAS
 # ============================================================
 
-def guardar_instancia(instancia: ExamInstance, directorio: str) -> None:
+
+def guardar_instancia(instancia: ExamInstance, directorio: Path) -> None:
     """
     Guarda la instancia en disco usando CSV + JSON.
     """
-    os.makedirs(directorio, exist_ok=True)
+    directorio = Path(directorio)
+    directorio.mkdir(parents=True, exist_ok=True)
 
-    instancia.student_exam.to_csv(
-        os.path.join(directorio, "student_exam.csv"),
-        index=False
-    )
-
-    instancia.exams_df.to_csv(
-        os.path.join(directorio, "exams.csv"),
-        index=False
-    )
-
-    instancia.rooms_df.to_csv(
-        os.path.join(directorio, "rooms.csv"),
-        index=False
-    )
+    instancia.student_exam.to_csv(directorio / "student_exam.csv", index=False)
+    instancia.exams_df.to_csv(directorio / "exams.csv", index=False)
+    instancia.rooms_df.to_csv(directorio / "rooms.csv", index=False)
 
     metadata = {
         "n_exams": instancia.n_exams,
         "n_students": instancia.n_students,
         "n_rooms": instancia.n_rooms,
         "n_slots": instancia.n_slots,
-        "seed": instancia.seed
+        "seed": instancia.seed,
     }
 
-    with open(os.path.join(directorio, "metadata.json"), "w", encoding="utf-8") as f:
+    with open(directorio / "metadata.json", "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=4, ensure_ascii=False)
 
 
-def cargar_instancia(directorio: str) -> ExamInstance:
+def cargar_instancia(directorio: Path) -> ExamInstance:
     """
     Carga una instancia guardada en disco y reconstruye las estructuras auxiliares.
     Esta función no se usa en el menú, pero queda disponible para otros scripts.
     """
-    with open(os.path.join(directorio, "metadata.json"), "r", encoding="utf-8") as f:
+    directorio = Path(directorio)
+
+    with open(directorio / "metadata.json", "r", encoding="utf-8") as f:
         metadata = json.load(f)
 
-    student_exam = pd.read_csv(os.path.join(directorio, "student_exam.csv"))
-    exams_df = pd.read_csv(os.path.join(directorio, "exams.csv"))
-    rooms_df = pd.read_csv(os.path.join(directorio, "rooms.csv"))
+    student_exam = pd.read_csv(directorio / "student_exam.csv")
+    exams_df = pd.read_csv(directorio / "exams.csv")
+    rooms_df = pd.read_csv(directorio / "rooms.csv")
 
     n_exams = metadata["n_exams"]
     n_students = metadata["n_students"]
@@ -215,12 +208,15 @@ def cargar_instancia(directorio: str) -> ExamInstance:
     room_capacities = dict(zip(rooms_df["room"], rooms_df["capacity"]))
 
     students_by_exam_series = student_exam.groupby("exam")["student"].apply(set)
-    students_by_exam = {exam: set() for exam in range(n_exams)}
-    students_by_exam.update(students_by_exam_series.to_dict())
+    students_by_exam = {
+        exam: set(students_by_exam_series.get(exam, set())) for exam in range(n_exams)
+    }
 
     exams_by_student_series = student_exam.groupby("student")["exam"].apply(list)
-    exams_by_student = {student: [] for student in range(n_students)}
-    exams_by_student.update(exams_by_student_series.to_dict())
+    exams_by_student = {
+        student: list(exams_by_student_series.get(student, []))
+        for student in range(n_students)
+    }
 
     conflict_matrix = np.zeros((n_exams, n_exams), dtype=bool)
 
@@ -254,22 +250,22 @@ def cargar_instancia(directorio: str) -> ExamInstance:
 # UTILIDADES DE INSTANCIAS
 # ============================================================
 
-def obtener_instancias_disponibles(base_dir: str = BASE_INSTANCES_DIR) -> List[str]:
+
+def obtener_instancias_disponibles(base_dir: Path = BASE_INSTANCES_DIR) -> List[str]:
     """
     Devuelve la lista de carpetas de instancias disponibles.
     """
-    if not os.path.exists(base_dir):
+    base_dir = Path(base_dir)
+
+    if not base_dir.exists():
         return []
 
-    instancias = [
-        nombre for nombre in os.listdir(base_dir)
-        if os.path.isdir(os.path.join(base_dir, nombre))
-    ]
+    instancias = [p.name for p in base_dir.iterdir() if p.is_dir()]
     instancias.sort()
     return instancias
 
 
-def listar_instancias(base_dir: str = BASE_INSTANCES_DIR) -> None:
+def listar_instancias(base_dir: Path = BASE_INSTANCES_DIR) -> None:
     """
     Muestra por pantalla las instancias disponibles.
     """
@@ -284,11 +280,12 @@ def listar_instancias(base_dir: str = BASE_INSTANCES_DIR) -> None:
         print(f"{i}. {nombre}")
 
 
-def seleccionar_instancia(base_dir: str = BASE_INSTANCES_DIR) -> Optional[str]:
+def seleccionar_instancia(base_dir: Path = BASE_INSTANCES_DIR) -> Optional[Path]:
     """
     Permite seleccionar una instancia de entre las disponibles.
     Devuelve la ruta completa o None si se cancela.
     """
+    base_dir = Path(base_dir)
     instancias = obtener_instancias_disponibles(base_dir)
 
     if not instancias:
@@ -300,7 +297,9 @@ def seleccionar_instancia(base_dir: str = BASE_INSTANCES_DIR) -> Optional[str]:
         print(f"  {i}. {nombre}")
 
     while True:
-        opcion = input("\nSelecciona una instancia por número (Enter para cancelar): ").strip()
+        opcion = input(
+            "\nSelecciona una instancia por número (Enter para cancelar): "
+        ).strip()
 
         if opcion == "":
             return None
@@ -308,29 +307,27 @@ def seleccionar_instancia(base_dir: str = BASE_INSTANCES_DIR) -> Optional[str]:
         try:
             indice = int(opcion)
             if 1 <= indice <= len(instancias):
-                return os.path.join(base_dir, instancias[indice - 1])
+                return base_dir / instancias[indice - 1]
         except ValueError:
             pass
 
         print("Selección no válida.")
 
 
-def eliminar_instancia(directorio: str) -> None:
+def eliminar_instancia(directorio: Path) -> None:
     """
     Elimina completamente la carpeta de una instancia.
     """
-    if os.path.exists(directorio) and os.path.isdir(directorio):
+    directorio = Path(directorio)
+
+    if directorio.exists() and directorio.is_dir():
         shutil.rmtree(directorio)
     else:
         raise FileNotFoundError(f"No existe la carpeta: {directorio}")
 
 
 def nombre_instancia_por_defecto(
-    n_exams: int,
-    n_students: int,
-    n_rooms: int,
-    n_slots: int,
-    seed: int
+    n_exams: int, n_students: int, n_rooms: int, n_slots: int, seed: int
 ) -> str:
     return f"instancia_{n_exams}_{n_students}_{n_rooms}_{n_slots}_seed{seed}"
 
@@ -338,6 +335,7 @@ def nombre_instancia_por_defecto(
 # ============================================================
 # RESUMEN
 # ============================================================
+
 
 def resumir_instancia(instancia: ExamInstance) -> None:
     """
@@ -362,10 +360,9 @@ def resumir_instancia(instancia: ExamInstance) -> None:
 # ENTRADA POR CONSOLA
 # ============================================================
 
+
 def pedir_entero(
-    mensaje: str,
-    valor_por_defecto: Optional[int] = None,
-    minimo: Optional[int] = None
+    mensaje: str, valor_por_defecto: Optional[int] = None, minimo: Optional[int] = None
 ) -> int:
     while True:
         texto = input(mensaje).strip()
@@ -405,38 +402,41 @@ def pedir_si_no(mensaje: str, valor_por_defecto: bool = True) -> bool:
 # OPCIONES DEL MENÚ
 # ============================================================
 
+
 def opcion_generar_instancia() -> None:
     print("\n=== GENERAR NUEVA INSTANCIA ===")
 
-    n_exams = pedir_entero("Número de exámenes [100]: ", valor_por_defecto=100, minimo=1)
-    n_students = pedir_entero("Número de estudiantes [2000]: ", valor_por_defecto=2000, minimo=1)
+    n_exams = pedir_entero(
+        "Número de exámenes [100]: ", valor_por_defecto=100, minimo=1
+    )
+    n_students = pedir_entero(
+        "Número de estudiantes [2000]: ", valor_por_defecto=2000, minimo=1
+    )
     n_rooms = pedir_entero("Número de aulas [10]: ", valor_por_defecto=10, minimo=1)
-    n_slots = pedir_entero("Número de franjas horarias [40]: ", valor_por_defecto=40, minimo=1)
+    n_slots = pedir_entero(
+        "Número de franjas horarias [40]: ", valor_por_defecto=40, minimo=1
+    )
     seed = pedir_entero("Semilla [42]: ", valor_por_defecto=42, minimo=0)
 
     min_exams_per_student = pedir_entero(
-        "Mínimo de exámenes por estudiante [3]: ",
-        valor_por_defecto=3,
-        minimo=1
+        "Mínimo de exámenes por estudiante [3]: ", valor_por_defecto=3, minimo=1
     )
     max_exams_per_student = pedir_entero(
         "Máximo de exámenes por estudiante [6]: ",
         valor_por_defecto=6,
-        minimo=min_exams_per_student
+        minimo=min_exams_per_student,
     )
     min_room_capacity = pedir_entero(
-        "Capacidad mínima de aula [30]: ",
-        valor_por_defecto=30,
-        minimo=1
+        "Capacidad mínima de aula [30]: ", valor_por_defecto=30, minimo=1
     )
     max_room_capacity = pedir_entero(
         "Capacidad máxima de aula [200]: ",
         valor_por_defecto=200,
-        minimo=min_room_capacity
+        minimo=min_room_capacity,
     )
     asegurar_factibilidad = pedir_si_no(
         "¿Asegurar que el mayor examen quepa en al menos un aula?",
-        valor_por_defecto=True
+        valor_por_defecto=True,
     )
 
     instancia = generar_instancia(
@@ -454,7 +454,7 @@ def opcion_generar_instancia() -> None:
 
     resumir_instancia(instancia)
 
-    os.makedirs(BASE_INSTANCES_DIR, exist_ok=True)
+    BASE_INSTANCES_DIR.mkdir(parents=True, exist_ok=True)
 
     nombre_defecto = nombre_instancia_por_defecto(
         n_exams, n_students, n_rooms, n_slots, seed
@@ -472,7 +472,7 @@ def opcion_generar_instancia() -> None:
     if os.path.exists(ruta_guardado):
         sobrescribir = pedir_si_no(
             f"La carpeta '{nombre_carpeta}' ya existe. ¿Sobrescribir?",
-            valor_por_defecto=False
+            valor_por_defecto=False,
         )
         if not sobrescribir:
             print("Operación cancelada.")
@@ -509,11 +509,10 @@ def opcion_eliminar_instancia() -> None:
         print("Operación cancelada.")
         return
 
-    nombre = os.path.basename(ruta)
+    nombre = ruta.name
 
     confirmar = pedir_si_no(
-        f"¿Seguro que deseas eliminar la instancia '{nombre}'?",
-        valor_por_defecto=False
+        f"¿Seguro que deseas eliminar la instancia '{nombre}'?", valor_por_defecto=False
     )
 
     if not confirmar:
@@ -531,6 +530,7 @@ def opcion_eliminar_instancia() -> None:
 # MENÚ PRINCIPAL
 # ============================================================
 
+
 def mostrar_menu() -> None:
     print("\n" + "=" * 55)
     print("              GESTOR DE INSTANCIAS")
@@ -543,7 +543,7 @@ def mostrar_menu() -> None:
 
 
 def main() -> None:
-    os.makedirs(BASE_INSTANCES_DIR, exist_ok=True)
+    BASE_INSTANCES_DIR.mkdir(parents=True, exist_ok=True)
 
     while True:
         mostrar_menu()
