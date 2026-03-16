@@ -63,26 +63,54 @@ class ExamSolution:
     def _valid_exam_id(self, exam_id: int) -> bool:
         return 0 <= exam_id < self.instance.n_exams
 
+    def _valid_slot_id(self, slot_id: int) -> bool:
+        return 0 <= slot_id < self.instance.n_slots
+
+    def _valid_room_id(self, room_id: int) -> bool:
+        return 0 <= room_id < self.instance.n_rooms
+
     def assign_exam(self, exam_id: int, slot: int, room: int) -> None:
-        if self._valid_exam_id(exam_id):
-            self.slot[exam_id] = slot
-            self.room[exam_id] = room
+        if not self._valid_exam_id(exam_id):
+            raise ValueError(f"exam_id inválido: {exam_id}")
+        if not self._valid_slot_id(slot):
+            raise ValueError(f"slot inválido: {slot}")
+        if not self._valid_room_id(room):
+            raise ValueError(f"room inválida: {room}")
+
+        self.slot[exam_id] = slot
+        self.room[exam_id] = room
 
     def unassign_exam(self, exam_id: int) -> None:
-        if self._valid_exam_id(exam_id):
-            self.slot[exam_id] = UNASSIGNED
-            self.room[exam_id] = UNASSIGNED
+        if not self._valid_exam_id(exam_id):
+            raise ValueError(f"exam_id inválido: {exam_id}")
+
+        self.slot[exam_id] = UNASSIGNED
+        self.room[exam_id] = UNASSIGNED
 
     def assign_slot(self, exam_id: int, slot: int) -> None:
-        if self._valid_exam_id(exam_id):
-            self.slot[exam_id] = slot
+        if not self._valid_exam_id(exam_id):
+            raise ValueError(f"exam_id inválido: {exam_id}")
+        if not self._valid_slot_id(slot):
+            raise ValueError(f"slot inválido: {slot}")
+        if self.room[exam_id] == UNASSIGNED:
+            raise ValueError(f"El examen {exam_id} no tiene aula asignada.")
+
+        self.slot[exam_id] = slot
 
     def swap_slots(self, exam_id_1: int, exam_id_2: int) -> None:
-        if self._valid_exam_id(exam_id_1) and self._valid_exam_id(exam_id_2):
-            self.slot[exam_id_1], self.slot[exam_id_2] = (
-                self.slot[exam_id_2],
-                self.slot[exam_id_1],
-            )
+        if not self._valid_exam_id(exam_id_1):
+            raise ValueError(f"exam_id_1 inválido: {exam_id_1}")
+        if not self._valid_exam_id(exam_id_2):
+            raise ValueError(f"exam_id_2 inválido: {exam_id_2}")
+        if not self.is_assigned(exam_id_1):
+            raise ValueError(f"El examen {exam_id_1} no está asignado")
+        if not self.is_assigned(exam_id_2):
+            raise ValueError(f"El examen {exam_id_2} no está asignado")
+
+        self.slot[exam_id_1], self.slot[exam_id_2] = (
+            self.slot[exam_id_2],
+            self.slot[exam_id_1],
+        )
 
     def __str__(self) -> str:
         used_slots = np.unique(self.slot[self.slot != UNASSIGNED])
