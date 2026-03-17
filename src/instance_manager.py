@@ -9,18 +9,20 @@ import numpy as np
 import pandas as pd
 
 
-# ============================================================
-# CONFIGURACIÓN
-# ============================================================
+# ==============================================================================
+
+# CONFIGURACIÓN ================================================================
+
+
 CURRENT_FILE = Path(__file__).resolve()
 SRC_DIR = CURRENT_FILE.parent
 PROJECT_ROOT = SRC_DIR.parent
 BASE_INSTANCES_DIR = PROJECT_ROOT / "data" / "instances"
 BASE_INSTANCES_DIR.mkdir(parents=True, exist_ok=True)
 
-# ============================================================
-# ESTRUCTURA DE LA INSTANCIA
-# ============================================================
+# ==============================================================================
+
+# ESTRUCTURA DE LA INSTANCIA ===================================================
 
 
 @dataclass
@@ -42,16 +44,16 @@ class ExamInstance:
     conflict_matrix: np.ndarray
 
 
-# ============================================================
-# GENERACIÓN DE INSTANCIAS
-# ============================================================
+# ==============================================================================
+
+# GENERACIÓN DE INSTANCIAS =====================================================
 
 
 def generar_instancia(
     n_exams: int = 100,
     n_students: int = 2000,
     n_rooms: int = 10,
-    n_slots: int = 40,
+    n_slots: Optional[int] = None,
     seed: int = 42,
     min_exams_per_student: int = 3,
     max_exams_per_student: int = 6,
@@ -65,6 +67,9 @@ def generar_instancia(
 
     random.seed(seed)
     np.random.seed(seed)
+
+    if n_slots is None:
+        n_slots = max(1, n_exams // 2)
 
     # --------------------------------------------------------
     # 1. Generar relación estudiante-examen
@@ -159,9 +164,9 @@ def generar_instancia(
     )
 
 
-# ============================================================
-# GUARDAR / CARGAR INSTANCIAS
-# ============================================================
+# ==============================================================================
+
+# GUARDAR / CARGAR INSTANCIAS ==================================================
 
 
 def guardar_instancia(instancia: ExamInstance, directorio: Path) -> None:
@@ -246,9 +251,9 @@ def cargar_instancia(directorio: Path) -> ExamInstance:
     )
 
 
-# ============================================================
-# UTILIDADES DE INSTANCIAS
-# ============================================================
+# ==============================================================================
+
+# UTILIDADES DE INSTANCIAS =====================================================
 
 
 def obtener_instancias_disponibles(base_dir: Path = BASE_INSTANCES_DIR) -> List[str]:
@@ -332,9 +337,9 @@ def nombre_instancia_por_defecto(
     return f"instancia_{n_exams}_{n_students}_{n_rooms}_{n_slots}_seed{seed}"
 
 
-# ============================================================
-# RESUMEN
-# ============================================================
+# ==============================================================================
+
+# RESUMEN ======================================================================
 
 
 def resumir_instancia(instancia: ExamInstance) -> None:
@@ -356,9 +361,9 @@ def resumir_instancia(instancia: ExamInstance) -> None:
     print()
 
 
-# ============================================================
-# ENTRADA POR CONSOLA
-# ============================================================
+# ==============================================================================
+
+# ENTRADA POR CONSOLA ==========================================================
 
 
 def pedir_entero(
@@ -398,9 +403,9 @@ def pedir_si_no(mensaje: str, valor_por_defecto: bool = True) -> bool:
         print("Respuesta no válida. Escribe 's' o 'n'.")
 
 
-# ============================================================
-# OPCIONES DEL MENÚ
-# ============================================================
+# ==============================================================================
+
+# OPCIONES DEL MENÚ ============================================================
 
 
 def opcion_generar_instancia() -> None:
@@ -413,8 +418,12 @@ def opcion_generar_instancia() -> None:
         "Número de estudiantes [2000]: ", valor_por_defecto=2000, minimo=1
     )
     n_rooms = pedir_entero("Número de aulas [10]: ", valor_por_defecto=10, minimo=1)
+
+    n_slots_default = max(1, n_exams // 2)
     n_slots = pedir_entero(
-        "Número de franjas horarias [40]: ", valor_por_defecto=40, minimo=1
+        "Número de franjas horarias [n_exams/2]: ",
+        valor_por_defecto=n_slots_default,
+        minimo=1,
     )
     seed = pedir_entero("Semilla [42]: ", valor_por_defecto=42, minimo=0)
 
@@ -526,9 +535,9 @@ def opcion_eliminar_instancia() -> None:
         print(f"Error al eliminar la instancia: {e}")
 
 
-# ============================================================
-# MENÚ PRINCIPAL
-# ============================================================
+# ==============================================================================
+
+# MENÚ PRINCIPAL ===============================================================
 
 
 def mostrar_menu() -> None:
