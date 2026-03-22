@@ -3,6 +3,7 @@
 Práctica 1 de la asignatura **Metaheurísticas**  
 Grado en Ingeniería Informática  
 Curso **2025/2026**
+Autor: Juan José Trillo Jiménez
 
 ---
 
@@ -126,9 +127,7 @@ La implementación actual no impone necesariamente estas restricciones durante l
 
 La función objetivo implementada en `objective.py` es:
 
-\[
-f(s) = \text{hard\_penalty} \cdot \text{hard\_violations}(s) + \text{soft\_penalty}(s)
-\]
+`f(s) = hard_penalty * hard_violations(s) + soft_penalty(s)`
 
 donde:
 
@@ -391,11 +390,3 @@ pip install numpy pandas matplotlib
 
 - evaluación incremental
 - metaheurísticas avanzadas
-
----
-
-## Autoría
-
-Juan José Trillo Jiménez
-Práctica 1 de Metaheurísticas  
-Curso 2025/2026
