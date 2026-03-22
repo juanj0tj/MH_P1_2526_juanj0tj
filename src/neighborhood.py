@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from random import Random
-from typing import Generator, Iterable, Iterator, Literal, Optional, Sequence
+from typing import Iterator, Literal, Optional
 
 from constraints import can_change_slot, can_swap_slots
 from objective import ObjectiveConfig, objective_value
@@ -75,8 +75,9 @@ def is_move_feasible(solution: ExamSolution, move: NeighborhoodMove) -> bool:
     Comprueba si un movimiento genera un vecino factible con respecto a
     las restricciones duras.
 
-    Convención adoptada en este módulo:
-    - El vecindario base genera solo vecinos factibles.
+    Nota:
+    - Esta función es auxiliar.
+    - El vecindario NO se limita a movimientos factibles.
     """
 
     if move.kind == "change_slot":
@@ -94,11 +95,11 @@ def apply_move(solution: ExamSolution, move: NeighborhoodMove) -> ExamSolution:
     """
     Aplica un movimiento sobre una COPIA de la solución y devuelve el vecino.
 
-    Lanza ValueError si el movimiento no es factible.
+    Importante:
+    - No filtra por factibilidad respecto a restricciones duras.
+    - Solo exige que el movimiento sea estructuralmente válido para la
+      representación de la solución.
     """
-
-    if not is_move_feasible(solution, move):
-        raise ValueError(f"Movimiento no factible: {move}")
 
     neighbor = solution.copy()
 
@@ -145,10 +146,13 @@ def iter_change_slot_moves(
     rng: Optional[Random] = None,
 ) -> Iterator[NeighborhoodMove]:
     """
-    Genera movimientos factibles de tipo 'change_slot'.
+    Genera movimientos de tipo 'change_slot'.
 
     Para cada examen asignado, intenta moverlo a otra franja distinta
     conservando su aula actual.
+
+    Estos movimientos pueden producir vecinos factibles o no factibles.
+    La decisión final la toma la función objetivo penalizada.
 
     Orden:
     - Determinista por defecto.
@@ -171,14 +175,11 @@ def iter_change_slot_moves(
             if new_slot == current_slot:
                 continue
 
-            move = NeighborhoodMove(
+            yield NeighborhoodMove(
                 kind="change_slot",
                 exam_id_1=exam_id,
                 new_slot=new_slot,
             )
-
-            if is_move_feasible(solution, move):
-                yield move
 
 
 # ==============================================================================
@@ -193,10 +194,13 @@ def iter_swap_slot_moves(
     rng: Optional[Random] = None,
 ) -> Iterator[NeighborhoodMove]:
     """
-    Genera movimientos factibles de tipo 'swap_slots'.
+    Genera movimientos de tipo 'swap_slots'.
 
     Recorre pares (e1, e2) con e1 < e2 para evitar duplicados.
     No genera swaps triviales entre exámenes ya colocados en el mismo slot.
+
+    Estos movimientos pueden producir vecinos factibles o no factibles.
+    La decisión final la toma la función objetivo penalizada.
     """
 
     exam_ids = list(range(solution.instance.n_exams))
@@ -217,14 +221,11 @@ def iter_swap_slot_moves(
             if int(solution.slot[e1]) == int(solution.slot[e2]):
                 continue
 
-            move = NeighborhoodMove(
+            yield NeighborhoodMove(
                 kind="swap_slots",
                 exam_id_1=e1,
                 exam_id_2=e2,
             )
-
-            if is_move_feasible(solution, move):
-                yield move
 
 
 # ==============================================================================
@@ -241,7 +242,10 @@ def iter_moves(
     rng: Optional[Random] = None,
 ) -> Iterator[NeighborhoodMove]:
     """
-    Itera sobre el vecindario factible de la solución.
+    Itera sobre el vecindario de la solución.
+
+    El vecindario puede incluir movimientos que produzcan vecinos
+    no factibles con respecto a restricciones duras.
 
     El orden puede hacerse aleatorio, útil especialmente en estrategias
     de primer mejor.
@@ -261,9 +265,10 @@ def iter_neighbors(
     include_swap_slots: bool = True,
     randomize: bool = False,
     rng: Optional[Random] = None,
-) -> Iterator[tuple[NeighborhoodMove, ExamSolution]]:
+) -> Iterator[ExamSolution]:
     """
-    Itera sobre pares (movimiento, solución_vecina).
+    Itera sobre las soluciones vecinas generadas por los movimientos del
+    vecindario definido.
     """
 
     for move in iter_moves(
@@ -273,7 +278,7 @@ def iter_neighbors(
         randomize=randomize,
         rng=rng,
     ):
-        yield move, apply_move(solution, move)
+        yield apply_move(solution, move)
 
 
 # ==============================================================================
@@ -287,7 +292,7 @@ def evaluate_move(
     config: ObjectiveConfig = ObjectiveConfig(),
 ) -> float:
     """
-    Evalúa la solución vecina generada por un movimiento.
+    Evalúa la solución vecina que resulta de aplicar un movimiento.
     """
     neighbor = apply_move(solution, move)
     return objective_value(neighbor, config=config)
@@ -298,31 +303,35 @@ def iter_evaluated_moves(
     config: ObjectiveConfig = ObjectiveConfig(),
     *,
     include_change_slot: bool = True,
-    include_swap_slot: bool = True,
+    include_swap_slots: bool = True,
     randomize: bool = False,
     rng: Optional[Random] = None,
 ) -> Iterator[EvaluatedMove]:
     """
-    Itera sobre movimientos ya evaluados con la función objetivo.
+    Itera sobre movimientos junto con el valor objetivo de su vecino.
     """
+
     for move in iter_moves(
         solution,
         include_change_slot=include_change_slot,
-        include_swap_slots=include_swap_slot,
+        include_swap_slots=include_swap_slots,
         randomize=randomize,
         rng=rng,
     ):
-        value = evaluate_move(solution, move, config=config)
-        yield EvaluatedMove(move=move, value=value)
+        yield EvaluatedMove(
+            move=move,
+            value=evaluate_move(solution, move, config=config),
+        )
 
 
 # ==============================================================================
 
-# SOPORTE DIRECTO PARA PRIMER MEJOR Y MEJOR ====================================
+# SELECCIÓN DE MEJORAS =========================================================
 
 
 def first_improving_move(
     solution: ExamSolution,
+    current_value: float,
     config: ObjectiveConfig = ObjectiveConfig(),
     *,
     include_change_slot: bool = True,
@@ -331,19 +340,15 @@ def first_improving_move(
     rng: Optional[Random] = None,
 ) -> Optional[EvaluatedMove]:
     """
-    Devuelve el primer movimiento que mejora la solución actual.
-
-    Por defecto randomize=True porque en primer mejor suele recorrerse el
-    entorno en orden aleatorio.
+    Devuelve el primer movimiento que mejora el valor objetivo actual,
+    o None si no existe.
     """
-
-    current_value = objective_value(solution, config=config)
 
     for evaluated in iter_evaluated_moves(
         solution,
         config=config,
         include_change_slot=include_change_slot,
-        include_swap_slot=include_swap_slots,
+        include_swap_slots=include_swap_slots,
         randomize=randomize,
         rng=rng,
     ):
@@ -355,61 +360,37 @@ def first_improving_move(
 
 def best_improving_move(
     solution: ExamSolution,
+    current_value: float,
     config: ObjectiveConfig = ObjectiveConfig(),
     *,
     include_change_slot: bool = True,
     include_swap_slots: bool = True,
 ) -> Optional[EvaluatedMove]:
     """
-    Explora todo el vecindario y devuelve el mejor movimiento.
-    Si no existe mejora, devuelve None.
+    Devuelve el mejor movimiento que mejora el valor objetivo actual,
+    o None si no existe.
     """
 
-    current_value = objective_value(solution, config=config)
-
-    best_move: Optional[EvaluatedMove] = None
+    best: Optional[EvaluatedMove] = None
 
     for evaluated in iter_evaluated_moves(
         solution,
         config=config,
         include_change_slot=include_change_slot,
-        include_swap_slot=include_swap_slots,
+        include_swap_slots=include_swap_slots,
         randomize=False,
         rng=None,
     ):
         if evaluated.value < current_value:
-            if best_move is None or evaluated.value < best_move.value:
-                best_move = evaluated
+            if best is None or evaluated.value < best.value:
+                best = evaluated
 
-    return best_move
+    return best
 
 
 # ==============================================================================
 
-# UTILIDADES DE ALTO NIVEL =====================================================
-
-
-def get_all_neighbors(
-    solution: ExamSolution,
-    *,
-    include_change_slot: bool = True,
-    include_swap_slots: bool = True,
-    randomize: bool = False,
-    rng: Optional[Random] = None,
-) -> list[tuple[NeighborhoodMove, ExamSolution]]:
-    """
-    Materializa el vecindario completo en una lista.
-    """
-
-    return list(
-        iter_neighbors(
-            solution,
-            include_change_slot=include_change_slot,
-            include_swap_slots=include_swap_slots,
-            randomize=randomize,
-            rng=rng,
-        )
-    )
+# UTILIDADES DE CONVENIENCIA ===================================================
 
 
 def get_all_moves(
@@ -421,10 +402,32 @@ def get_all_moves(
     rng: Optional[Random] = None,
 ) -> list[NeighborhoodMove]:
     """
-    Devuelve todos los movimientos factibles del vecindario.
+    Devuelve todos los movimientos del vecindario definido.
     """
     return list(
         iter_moves(
+            solution,
+            include_change_slot=include_change_slot,
+            include_swap_slots=include_swap_slots,
+            randomize=randomize,
+            rng=rng,
+        )
+    )
+
+
+def get_all_neighbors(
+    solution: ExamSolution,
+    *,
+    include_change_slot: bool = True,
+    include_swap_slots: bool = True,
+    randomize: bool = False,
+    rng: Optional[Random] = None,
+) -> list[ExamSolution]:
+    """
+    Devuelve todos los vecinos generados por el vecindario definido.
+    """
+    return list(
+        iter_neighbors(
             solution,
             include_change_slot=include_change_slot,
             include_swap_slots=include_swap_slots,

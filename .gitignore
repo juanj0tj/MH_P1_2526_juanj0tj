@@ -1,2 +1,3 @@
 docs/LaTeX/
 .vscode/
+src/__pycache__/

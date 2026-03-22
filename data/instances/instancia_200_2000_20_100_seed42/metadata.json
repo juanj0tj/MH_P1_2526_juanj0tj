@@ -1,0 +1,7 @@
+{
+    "n_exams": 200,
+    "n_students": 2000,
+    "n_rooms": 20,
+    "n_slots": 100,
+    "seed": 42
+}

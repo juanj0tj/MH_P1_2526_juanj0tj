@@ -26,11 +26,11 @@ class ObjectiveConfig:
         hard_penalty * hard_violations + soft_penalty
     """
 
-    hard_penalty: float = 1_000_000.0
+    hard_penalty: float = 100_000.0
     w_consecutive: float = 5.0
     w_same_day: float = 2.0
     w_distribution: float = 1.0
-    slots_per_day: int = 4
+    slots_per_day: int = 5
 
 
 # ==============================================================================

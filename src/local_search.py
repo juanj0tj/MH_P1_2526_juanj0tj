@@ -213,6 +213,7 @@ def first_improvement_search(
     Estrategia:
     - Parte de la solución inicial.
     - Explora vecinos en orden aleatorio.
+    - Los vecinos pueden ser factibles o no factibles.
     - En cuanto encuentra el primer vecino que mejora, se mueve a él.
     - Termina cuando:
         - no existe mejora en el vecindario explorado, o
@@ -222,6 +223,8 @@ def first_improvement_search(
     Convenciones:
     - Se trabaja sobre una copia de la solución inicial.
     - El recuento de evaluaciones incluye la evaluación inicial.
+    - La comparación entre vecinos la determina objective_value, que puede
+      penalizar violaciones duras.
     - Si track_history=True, se guarda:
         - el estado inicial,
         - cada mejora aceptada,
@@ -339,7 +342,8 @@ def best_improvement_search(
 
     Estrategia:
     - Parte de la solución inicial.
-    - Evalúa todo el vecindario factible.
+    - Evalúa todo el vecindario definido por los operadores activos.
+    - Los vecinos pueden ser factibles o no factibles.
     - Selecciona el mejor vecino que mejore a la solución actual.
     - Termina cuando:
         - no existe mejora en todo el vecindario, o
@@ -349,6 +353,8 @@ def best_improvement_search(
     Convenciones:
     - Se trabaja sobre una copia de la solución inicial.
     - El recuento de evaluaciones incluye la evaluación inicial.
+    - La comparación entre vecinos la determina objective_value, que puede
+      penalizar violaciones duras.
     - Si track_history=True, se guarda:
         - el estado inicial,
         - cada mejora aceptada,

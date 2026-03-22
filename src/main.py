@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import argparse
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Optional, Iterable
-
+from typing import Any, Optional
+import os
+import platform
 import matplotlib.pyplot as plt
 import pandas as pd
 
@@ -14,6 +14,14 @@ from instance_manager import (
     ExamInstance,
     cargar_instancia,
     generar_instancia,
+    guardar_instancia,
+    listar_instancias,
+    seleccionar_instancia,
+    resumir_instancia,
+    eliminar_instancia,
+    nombre_instancia_por_defecto,
+    pedir_entero,
+    pedir_si_no,
 )
 from constructive import (
     ConstructiveConfig,
@@ -70,7 +78,7 @@ class SearchParams:
     Parámetros de búsqueda local.
     """
 
-    max_evaluations: Optional[int] = 20_000
+    max_evaluations: Optional[int] = 50_000
     max_iterations: Optional[int] = None
     include_change_slot: bool = True
     include_swap_slots: bool = True
@@ -117,49 +125,19 @@ class ExperimentConfig:
 def build_constructive_config(
     objective_config: ObjectiveConfig,
     *,
-    sort_by_conflicts: bool = True,
-    sort_by_size: bool = True,
-    prefer_less_loaded_slots: bool = True,
-    prefer_best_fit_room: bool = True,
-    evaluate_all_feasible_candidates: bool = True,
+    seed: Optional[int] = None,
+    shuffle_exams: bool = True,
 ) -> ConstructiveConfig:
-    """
-    Construye la configuración de la heurística constructiva reutilizando
-    la misma ObjectiveConfig del experimento.
-    """
     return ConstructiveConfig(
         objective_config=objective_config,
-        sort_by_conflicts=sort_by_conflicts,
-        sort_by_size=sort_by_size,
-        prefer_less_loaded_slots=prefer_less_loaded_slots,
-        prefer_best_fit_room=prefer_best_fit_room,
-        evaluate_all_feasible_candidates=evaluate_all_feasible_candidates,
+        seed=seed,
+        shuffle_exams=shuffle_exams,
     )
 
 
 # ==============================================================================
 
 # INSTANCIAS ===================================================================
-
-
-def resolve_instance_dir(user_value: str) -> Path:
-    """
-    Resuelve una ruta de instancia.
-
-    Casos aceptados:
-    - nombre de directorio dentro de data/instances
-    - ruta relativa
-    - ruta absoluta
-    """
-    candidate = Path(user_value)
-
-    if candidate.is_absolute():
-        return candidate
-
-    if candidate.exists():
-        return candidate.resolve()
-
-    return (BASE_INSTANCES_DIR / user_value).resolve()
 
 
 def load_or_generate_instance(config: ExperimentConfig) -> ExamInstance:
@@ -301,9 +279,6 @@ def local_search_result_to_row(
 def constructive_trace_df(result: ConstructiveResult) -> pd.DataFrame:
     """
     Traza mínima para la constructiva.
-
-    Como la constructiva no expone historial incremental, se representa con un
-    único punto final.
     """
     return pd.DataFrame(
         [
@@ -321,10 +296,6 @@ def constructive_trace_df(result: ConstructiveResult) -> pd.DataFrame:
 def local_search_trace_df(result: LocalSearchResult) -> pd.DataFrame:
     """
     Convierte la historia del resultado de búsqueda local a DataFrame.
-
-    Compatible con:
-    - versión ampliada con result.history
-    - versión antigua sin history
     """
     history = getattr(result, "history", None)
 
@@ -341,7 +312,6 @@ def local_search_trace_df(result: LocalSearchResult) -> pd.DataFrame:
         ]
         return pd.DataFrame(rows)
 
-    # Compatibilidad hacia atrás si no existe history
     if result.initial_objective != result.final_objective:
         return pd.DataFrame(
             [
@@ -390,11 +360,6 @@ def plot_objective_evolution(
 ) -> None:
     """
     Dibuja la evolución del valor de la función objetivo.
-
-    x_axis permitido:
-    - evaluations
-    - iterations
-    - accepted_moves
     """
     valid_axes = {"evaluations", "iterations", "accepted_moves"}
     if x_axis not in valid_axes:
@@ -610,232 +575,422 @@ def run_single_experiment(
 
 # ==============================================================================
 
-# EXPERIMENTO POR LOTES ========================================================
+# MENÚ - PARÁMETROS DE EJECUCIÓN ===============================================
 
 
-def run_batch_over_seeds(
-    base_config: ExperimentConfig,
-    seeds: Iterable[int],
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Ejecuta varios experimentos cambiando la semilla de la instancia.
+def pedir_float(
+    mensaje: str,
+    valor_por_defecto: Optional[float] = None,
+    minimo: Optional[float] = None,
+) -> float:
+    while True:
+        texto = input(mensaje).strip()
 
-    Devuelve:
-    - detailed_df: una fila por algoritmo y semilla
-    - aggregated_df: medias y desviaciones por algoritmo
-    """
-    detailed_frames: list[pd.DataFrame] = []
+        if texto == "" and valor_por_defecto is not None:
+            valor = valor_por_defecto
+        else:
+            try:
+                valor = float(texto)
+            except ValueError:
+                print("Entrada no válida. Debes introducir un número.")
+                continue
 
-    for seed in seeds:
-        instance_params = InstanceParams(
-            **{**asdict(base_config.instance_params), "seed": seed}
+        if minimo is not None and valor < minimo:
+            print(f"El valor debe ser >= {minimo}.")
+            continue
+
+        return valor
+
+
+def pedir_entero_o_none(
+    mensaje: str,
+    valor_por_defecto: Optional[int] = None,
+    minimo: Optional[int] = None,
+) -> Optional[int]:
+    while True:
+        texto = input(mensaje).strip()
+
+        if texto == "":
+            return valor_por_defecto
+
+        if texto.lower() in {"none", "ninguno", "sin limite", "sin límite"}:
+            return None
+
+        try:
+            valor = int(texto)
+        except ValueError:
+            print("Entrada no válida. Debes introducir un entero o dejarlo vacío.")
+            continue
+
+        if minimo is not None and valor < minimo:
+            print(f"El valor debe ser >= {minimo}.")
+            continue
+
+        return valor
+
+
+def pedir_output_params() -> OutputParams:
+    print("\n=== CONFIGURACIÓN DE SALIDA ===")
+    guardar_summary = pedir_si_no("¿Guardar summary.csv?", valor_por_defecto=True)
+    guardar_traces = pedir_si_no("¿Guardar traces.csv?", valor_por_defecto=True)
+    guardar_plots = pedir_si_no("¿Guardar gráficas PNG?", valor_por_defecto=True)
+    mostrar_plots = False
+
+    if guardar_plots:
+        mostrar_plots = pedir_si_no(
+            "¿Mostrar gráficas por pantalla?",
+            valor_por_defecto=False,
         )
 
-        config = ExperimentConfig(
-            instance_params=instance_params,
-            objective_config=base_config.objective_config,
-            constructive_config=build_constructive_config(
-                base_config.objective_config,
-                sort_by_conflicts=base_config.constructive_config.sort_by_conflicts,
-                sort_by_size=base_config.constructive_config.sort_by_size,
-                prefer_less_loaded_slots=base_config.constructive_config.prefer_less_loaded_slots,
-                prefer_best_fit_room=base_config.constructive_config.prefer_best_fit_room,
-                evaluate_all_feasible_candidates=base_config.constructive_config.evaluate_all_feasible_candidates,
-            ),
-            search_params=base_config.search_params,
-            output_params=base_config.output_params,
-            instance_dir=None,
-            verbose=False,
-        )
-
-        summary_df, _ = run_single_experiment(config)
-        summary_df = summary_df.copy()
-        summary_df["seed"] = seed
-        detailed_frames.append(summary_df)
-
-    detailed_df = pd.concat(detailed_frames, ignore_index=True)
-
-    aggregated_df = (
-        detailed_df.groupby("algorithm", dropna=False)
-        .agg(
-            objective_mean=("objective", "mean"),
-            objective_std=("objective", "std"),
-            soft_penalty_mean=("soft_penalty", "mean"),
-            hard_violations_mean=("hard_violations", "mean"),
-            elapsed_time_mean=("elapsed_time", "mean"),
-            evaluations_mean=("evaluations", "mean"),
-            iterations_mean=("iterations", "mean"),
-            accepted_moves_mean=("accepted_moves", "mean"),
-        )
-        .reset_index()
-        .sort_values("objective_mean", ascending=True)
+    return OutputParams(
+        output_root=RESULTS_DIR,
+        save_summary_csv=guardar_summary,
+        save_traces_csv=guardar_traces,
+        save_plots=guardar_plots,
+        show_plots=mostrar_plots,
     )
 
-    batch_dir = base_config.output_params.output_root / "batch"
 
-    if base_config.output_params.save_summary_csv:
-        batch_dir.mkdir(parents=True, exist_ok=True)
-        detailed_df.to_csv(batch_dir / "batch_detailed.csv", index=False)
-        aggregated_df.to_csv(batch_dir / "batch_aggregated.csv", index=False)
+def pedir_objective_config() -> ObjectiveConfig:
+    print("\n=== CONFIGURACIÓN DE LA FUNCIÓN OBJETIVO ===")
+    hard_penalty = pedir_float(
+        "Penalización dura [100000.0]: ",
+        valor_por_defecto=100000.0,
+        minimo=0.0,
+    )
+    w_consecutive = pedir_float(
+        "Peso consecutivos [5.0]: ",
+        valor_por_defecto=5.0,
+        minimo=0.0,
+    )
+    w_same_day = pedir_float(
+        "Peso mismo día [2.0]: ",
+        valor_por_defecto=2.0,
+        minimo=0.0,
+    )
+    w_distribution = pedir_float(
+        "Peso distribución [1.0]: ",
+        valor_por_defecto=1.0,
+        minimo=0.0,
+    )
+    slots_per_day = pedir_entero(
+        "Franjas por día [4]: ",
+        valor_por_defecto=4,
+        minimo=1,
+    )
 
-    return detailed_df, aggregated_df
+    return ObjectiveConfig(
+        hard_penalty=hard_penalty,
+        w_consecutive=w_consecutive,
+        w_same_day=w_same_day,
+        w_distribution=w_distribution,
+        slots_per_day=slots_per_day,
+    )
+
+
+def pedir_search_params() -> SearchParams:
+    print("\n=== CONFIGURACIÓN DE BÚSQUEDA LOCAL ===")
+    max_evaluations = pedir_entero_o_none(
+        "Máximo de evaluaciones [20000] (Enter para 20000): ",
+        valor_por_defecto=20_000,
+        minimo=1,
+    )
+    max_iterations = pedir_entero_o_none(
+        "Máximo de iteraciones [sin límite] (Enter para None): ",
+        valor_por_defecto=None,
+        minimo=1,
+    )
+    include_change_slot = pedir_si_no(
+        "¿Activar operador change_slot?",
+        valor_por_defecto=True,
+    )
+    include_swap_slots = pedir_si_no(
+        "¿Activar operador swap_slots?",
+        valor_por_defecto=True,
+    )
+
+    if not include_change_slot and not include_swap_slots:
+        print("Debe quedar activado al menos un operador. Se activará change_slot.")
+        include_change_slot = True
+
+    first_seed = pedir_entero(
+        "Semilla para first_improvement [42]: ",
+        valor_por_defecto=42,
+        minimo=0,
+    )
+    track_history = pedir_si_no(
+        "¿Registrar historia para trazas y gráficas?",
+        valor_por_defecto=True,
+    )
+
+    return SearchParams(
+        max_evaluations=max_evaluations,
+        max_iterations=max_iterations,
+        include_change_slot=include_change_slot,
+        include_swap_slots=include_swap_slots,
+        first_improvement_seed=first_seed,
+        track_history=track_history,
+    )
 
 
 # ==============================================================================
 
-# ARGUMENTOS ===================================================================
+# MENÚ - OPCIONES DE INSTANCIAS ================================================
 
 
-def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Script principal de experimentación para planificación de exámenes."
+def opcion_generar_instancia() -> None:
+    print("\n=== GENERAR NUEVA INSTANCIA ===")
+
+    n_exams = pedir_entero(
+        "Número de exámenes [100]: ",
+        valor_por_defecto=100,
+        minimo=1,
+    )
+    n_students = pedir_entero(
+        "Número de estudiantes [2000]: ",
+        valor_por_defecto=2000,
+        minimo=1,
+    )
+    n_rooms = pedir_entero(
+        "Número de aulas [10]: ",
+        valor_por_defecto=10,
+        minimo=1,
     )
 
-    source_group = parser.add_mutually_exclusive_group()
-    source_group.add_argument(
-        "--instance-name",
-        type=str,
-        default=None,
-        help=(
-            "Nombre del directorio de una instancia dentro de data/instances. "
-            "Ejemplo: instancia_100_2000_10_40_seed42"
-        ),
+    n_slots_default = max(1, n_exams // 2)
+    n_slots = pedir_entero(
+        "Número de franjas horarias [n_exams/2]: ",
+        valor_por_defecto=n_slots_default,
+        minimo=1,
     )
-    source_group.add_argument(
-        "--instance-path",
-        type=str,
-        default=None,
-        help="Ruta completa o relativa a un directorio de instancia guardado.",
+    seed = pedir_entero("Semilla [42]: ", valor_por_defecto=42, minimo=0)
+
+    min_exams_per_student = pedir_entero(
+        "Mínimo de exámenes por estudiante [3]: ",
+        valor_por_defecto=3,
+        minimo=1,
     )
-    source_group.add_argument(
-        "--generate",
-        action="store_true",
-        help="Generar una nueva instancia.",
+    max_exams_per_student = pedir_entero(
+        "Máximo de exámenes por estudiante [6]: ",
+        valor_por_defecto=6,
+        minimo=min_exams_per_student,
     )
-
-    parser.add_argument("--n-exams", type=int, default=100)
-    parser.add_argument("--n-students", type=int, default=2000)
-    parser.add_argument("--n-rooms", type=int, default=10)
-    parser.add_argument("--n-slots", type=int, default=None)
-    parser.add_argument("--seed", type=int, default=42)
-
-    parser.add_argument("--max-evaluations", type=int, default=20_000)
-    parser.add_argument("--max-iterations", type=int, default=None)
-
-    parser.add_argument("--hard-penalty", type=float, default=1_000_000.0)
-    parser.add_argument("--w-consecutive", type=float, default=5.0)
-    parser.add_argument("--w-same-day", type=float, default=2.0)
-    parser.add_argument("--w-distribution", type=float, default=1.0)
-    parser.add_argument("--slots-per-day", type=int, default=4)
-
-    parser.add_argument(
-        "--disable-change-slot",
-        action="store_true",
-        help="Desactiva el operador change_slot.",
+    min_room_capacity = pedir_entero(
+        "Capacidad mínima de aula [30]: ",
+        valor_por_defecto=30,
+        minimo=1,
     )
-    parser.add_argument(
-        "--disable-swap-slots",
-        action="store_true",
-        help="Desactiva el operador swap_slots.",
+    max_room_capacity = pedir_entero(
+        "Capacidad máxima de aula [200]: ",
+        valor_por_defecto=200,
+        minimo=min_room_capacity,
+    )
+    asegurar_factibilidad = pedir_si_no(
+        "¿Asegurar que el mayor examen quepa en al menos un aula?",
+        valor_por_defecto=True,
     )
 
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default=str(RESULTS_DIR),
-        help="Directorio raíz donde guardar resultados.",
-    )
-    parser.add_argument("--no-save-summary-csv", action="store_true")
-    parser.add_argument("--no-save-traces-csv", action="store_true")
-    parser.add_argument("--no-save-plots", action="store_true")
-    parser.add_argument("--show-plots", action="store_true")
-    parser.add_argument("--quiet", action="store_true")
-
-    parser.add_argument(
-        "--batch-seeds",
-        type=str,
-        default=None,
-        help="Lista de semillas separadas por comas. Ejemplo: 1,2,3,4,5",
+    instancia = generar_instancia(
+        n_exams=n_exams,
+        n_students=n_students,
+        n_rooms=n_rooms,
+        n_slots=n_slots,
+        seed=seed,
+        min_exams_per_student=min_exams_per_student,
+        max_exams_per_student=max_exams_per_student,
+        min_room_capacity=min_room_capacity,
+        max_room_capacity=max_room_capacity,
+        asegurar_factibilidad_capacidad=asegurar_factibilidad,
     )
 
-    return parser
+    resumir_instancia(instancia)
 
-
-def config_from_args(args: argparse.Namespace) -> ExperimentConfig:
-    objective_config = ObjectiveConfig(
-        hard_penalty=args.hard_penalty,
-        w_consecutive=args.w_consecutive,
-        w_same_day=args.w_same_day,
-        w_distribution=args.w_distribution,
-        slots_per_day=args.slots_per_day,
+    nombre_defecto = nombre_instancia_por_defecto(
+        n_exams, n_students, n_rooms, n_slots, seed
     )
 
-    constructive_config = build_constructive_config(objective_config)
+    nombre_carpeta = input(
+        f"Nombre de la carpeta para guardar la instancia [{nombre_defecto}]: "
+    ).strip()
 
-    instance_params = InstanceParams(
-        n_exams=args.n_exams,
-        n_students=args.n_students,
-        n_rooms=args.n_rooms,
-        n_slots=args.n_slots,
-        seed=args.seed,
+    if nombre_carpeta == "":
+        nombre_carpeta = nombre_defecto
+
+    ruta_guardado = BASE_INSTANCES_DIR / nombre_carpeta
+
+    if ruta_guardado.exists():
+        sobrescribir = pedir_si_no(
+            f"La carpeta '{nombre_carpeta}' ya existe. ¿Sobrescribir?",
+            valor_por_defecto=False,
+        )
+        if not sobrescribir:
+            print("Operación cancelada.")
+            return
+
+    guardar_instancia(instancia, ruta_guardado)
+    print(f"\nInstancia guardada en: {ruta_guardado}")
+
+
+def opcion_resumen_instancia() -> None:
+    print("\n=== MOSTRAR RESUMEN DE INSTANCIA ===")
+
+    ruta = seleccionar_instancia()
+    if ruta is None:
+        print("Operación cancelada.")
+        return
+
+    try:
+        instancia = cargar_instancia(ruta)
+        resumir_instancia(instancia)
+    except Exception as e:
+        print(f"Error al cargar la instancia: {e}")
+
+
+def opcion_listar_instancias() -> None:
+    listar_instancias()
+
+
+def opcion_eliminar_instancia() -> None:
+    print("\n=== ELIMINAR INSTANCIA ===")
+
+    ruta = seleccionar_instancia()
+    if ruta is None:
+        print("Operación cancelada.")
+        return
+
+    confirmar = pedir_si_no(
+        f"¿Seguro que deseas eliminar la instancia '{ruta.name}'?",
+        valor_por_defecto=False,
     )
 
-    search_params = SearchParams(
-        max_evaluations=args.max_evaluations,
-        max_iterations=args.max_iterations,
-        include_change_slot=not args.disable_change_slot,
-        include_swap_slots=not args.disable_swap_slots,
-        first_improvement_seed=args.seed,
-        track_history=True,
+    if not confirmar:
+        print("Eliminación cancelada.")
+        return
+
+    try:
+        eliminar_instancia(ruta)
+        print(f"Instancia '{ruta.name}' eliminada correctamente.")
+    except Exception as e:
+        print(f"Error al eliminar la instancia: {e}")
+
+
+# ==============================================================================
+
+# MENÚ - EJECUCIÓN DE INSTANCIAS ===============================================
+
+
+def opcion_ejecutar_instancia() -> None:
+    print("\n=== EJECUTAR INSTANCIA EXISTENTE ===")
+
+    ruta = seleccionar_instancia()
+    if ruta is None:
+        print("Operación cancelada.")
+        return
+
+    try:
+        instancia = cargar_instancia(ruta)
+    except Exception as e:
+        print(f"Error al cargar la instancia: {e}")
+        return
+
+    resumir_instancia(instancia)
+
+    objective_config = pedir_objective_config()
+    search_params = pedir_search_params()
+    output_params = pedir_output_params()
+
+    constructive_seed = pedir_entero(
+        "Semilla de la constructiva aleatoria [misma semilla de instancia]: ",
+        valor_por_defecto=instancia.seed,
+        minimo=0,
+    )
+    shuffle_exams = pedir_si_no(
+        "¿Barajar el orden de exámenes en la constructiva?",
+        valor_por_defecto=True,
+    )
+    verbose = pedir_si_no(
+        "¿Mostrar resultados detallados por pantalla?",
+        valor_por_defecto=True,
     )
 
-    output_params = OutputParams(
-        output_root=Path(args.output_dir).resolve(),
-        save_summary_csv=not args.no_save_summary_csv,
-        save_traces_csv=not args.no_save_traces_csv,
-        save_plots=not args.no_save_plots,
-        show_plots=args.show_plots,
-    )
-
-    instance_dir: Optional[Path] = None
-    if args.instance_name is not None:
-        instance_dir = resolve_instance_dir(args.instance_name)
-    elif args.instance_path is not None:
-        instance_dir = resolve_instance_dir(args.instance_path)
-
-    return ExperimentConfig(
-        instance_params=instance_params,
+    config = ExperimentConfig(
+        instance_dir=ruta,
         objective_config=objective_config,
-        constructive_config=constructive_config,
+        constructive_config=build_constructive_config(
+            objective_config,
+            seed=constructive_seed,
+            shuffle_exams=shuffle_exams,
+        ),
         search_params=search_params,
         output_params=output_params,
-        instance_dir=instance_dir,
-        verbose=not args.quiet,
+        verbose=verbose,
     )
+
+    try:
+        summary_df, _ = run_single_experiment(config)
+
+        print("\n=== EJECUCIÓN FINALIZADA ===")
+        print(f"Resultados guardados en: {output_params.output_root / ruta.name}")
+        print("\nResumen final:")
+        print(summary_df.to_string(index=False))
+    except Exception as e:
+        print(f"Error durante la ejecución: {e}")
 
 
 # ==============================================================================
 
-# MAIN =========================================================================
+# MENÚ - FUNCIONES AUXILIARES ==================================================
+
+
+def clear_screen() -> None:
+    """
+    Limpia la terminal en función del sistema operativo.
+    """
+    os.system("cls" if platform.system() == "Windows" else "clear")
+
+
+# ==============================================================================
+
+# MENÚ PRINCIPAL ===============================================================
+
+
+def mostrar_menu() -> None:
+    print("\n" + "=" * 60)
+    print("     PLANIFICACIÓN DE EXÁMENES - MENÚ PRINCIPAL")
+    print("=" * 60)
+    print("1. Generar una nueva instancia")
+    print("2. Ejecutar una instancia existente")
+    print("3. Mostrar resumen de una instancia")
+    print("4. Listar instancias disponibles")
+    print("5. Eliminar una instancia")
+    print("0. Salir")
 
 
 def main() -> None:
-    parser = build_arg_parser()
-    args = parser.parse_args()
+    BASE_INSTANCES_DIR.mkdir(parents=True, exist_ok=True)
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    config = config_from_args(args)
+    while True:
+        mostrar_menu()
+        opcion = input("\nSelecciona una opción: ").strip()
 
-    if args.batch_seeds:
-        seeds = [int(x.strip()) for x in args.batch_seeds.split(",") if x.strip()]
-        detailed_df, aggregated_df = run_batch_over_seeds(config, seeds)
+        clear_screen()
 
-        print("\n=== RESULTADOS DETALLADOS POR SEMILLA ===")
-        print(detailed_df.to_string(index=False))
-
-        print("\n=== RESULTADOS AGREGADOS ===")
-        print(aggregated_df.to_string(index=False))
-    else:
-        run_single_experiment(config)
+        if opcion == "1":
+            opcion_generar_instancia()
+        elif opcion == "2":
+            opcion_ejecutar_instancia()
+        elif opcion == "3":
+            opcion_resumen_instancia()
+        elif opcion == "4":
+            opcion_listar_instancias()
+        elif opcion == "5":
+            opcion_eliminar_instancia()
+        elif opcion == "0":
+            print("Saliendo del programa.")
+            break
+        else:
+            print("Opción no válida. Inténtalo de nuevo.")
 
 
 if __name__ == "__main__":

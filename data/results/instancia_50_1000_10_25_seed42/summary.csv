@@ -1,0 +1,4 @@
+algorithm,objective,initial_objective,final_objective,improvement,hard_violations,soft_penalty,student_conflicts,capacity_violations,unassigned_exams,elapsed_time,evaluations,iterations,accepted_moves
+first_improvement,3604117.0,6305212.0,3604117.0,2701095.0,36,4117.0,24,12,0,67.94321050000144,20000,63,62
+best_improvement,4104123.0,6305212.0,4104123.0,2201089.0,41,4123.0,29,12,0,68.6454060000251,20000,9,9
+constructive,6305212.0,6305212.0,6305212.0,0.0,63,5212.0,51,12,0,0.009799699997529387,1,,0
